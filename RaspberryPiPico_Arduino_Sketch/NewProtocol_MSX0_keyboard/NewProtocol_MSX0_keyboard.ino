@@ -24,28 +24,26 @@
 
 #include <hardware/gpio.h>
 #include <Wire.h>
+#include <cstring>
 
 #include "msx0kbscan.h"
-#include "face2keymap.h"
 
-#define I2C_ADDR	0x08							//	I2Cアドレス
-#define I2C_SDA		18								//	SDAにはGPIO18を使用する (※I2C1)
-#define I2C_SCL		19								//	SCLにはGPIO19を使用する (※I2C1)
-#define KB_INTR		17
-#define GPIO_LED	25
+#define I2C_ADDR		0x08						//	I2Cアドレス
+#define I2C_SDA			18							//	SDAにはGPIO18を使用する (※I2C1)
+#define I2C_SCL			19							//	SCLにはGPIO19を使用する (※I2C1)
+#define KB_INTR			17
+#define GPIO_LED		25
+#define GPIO_LED_CAPS	21
+#define GPIO_LED_KANA	20
 
 static CMSX0KBSCAN kbscan;
-static CF2KEY cf2key;
-static uint8_t keymap[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB0, 0x1F, 0xFF };
-static uint8_t init_keymap[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB0, 0x1F, 0x71 };
-static uint8_t next_keymap[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB0, 0x1F, 0xFF };
+static uint8_t keymap[14] = { 0x0E, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+static uint8_t init_keymap[14] = { 0x0E, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 static uint8_t msx_keymap[13] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 static uint8_t last_request[2] = { 0, 0 };
 static int count = 0;
-static bool led_shift = false;
-static bool led_sym = false;
-static volatile bool is_shift = false;
-static volatile bool is_first = true;
+static bool led_caps = false;
+static bool led_kana = false;
 static volatile bool is_sending = false;
 
 // --------------------------------------------------------------------
@@ -59,30 +57,22 @@ static void on_request() {
 		break;
 	case 0xFE:
 		//	デバイスタイプ要求
-		Wire1.write( 0xA2 );		//	FaceIIキーボード (MSX0クラファン版付属バージョン)
+		Wire1.write( 0xA3 );		//	新プロトコル MSX0キーボード
 		break;
 	default:
 	case 0xF1:
 		//	受信可能タイミング＋装飾キー状態通知
 		if( (last_request[1] & 0x80) != 0 ) {
 			//	装飾キー状態を取り込む
-			led_shift	= ((last_request[1] & 0x10) != 0);
-			led_sym		= ((last_request[1] & 0x20) != 0);
-		}
-		if( !is_shift ) {
-			gpio_put( KB_INTR, 1 );
+			led_caps	= ((last_request[1] & 0x10) != 0);
+			led_kana	= ((last_request[1] & 0x20) != 0);
 		}
 		for( i = 0; i < sizeof(keymap); i++ ) {
 			Wire1.write( keymap[i] );
 		}
-		if( is_shift ) {
-			std::memcpy( keymap, next_keymap, sizeof(keymap) );
-			is_shift = false;
-		}
-		else {
-			is_sending	= false;
-			is_first = false;
-		}
+		is_sending	= false;
+		gpio_put( KB_INTR, 1 );
+		gpio_put( GPIO_LED, 0 );
 		break;
 	}
 }
@@ -101,32 +91,29 @@ static void on_receive( int len ) {
 	}
 	if( last_request[0] == 0xF0 ) {
 		//	通信開始要求
-		is_first	= true;
-		is_shift	= false;
 		is_sending	= true;
-		led_shift	= false;
-		led_sym		= false;
+		led_caps	= false;
+		led_kana	= false;
 		std::memcpy( keymap, init_keymap, sizeof(keymap) );
 		gpio_put( KB_INTR, 0 );
+		gpio_put( GPIO_LED, 1 );
 	}
 }
 
 // --------------------------------------------------------------------
 static void led_control( void ) {
 
-	count = (count + 1) & 16;
-
-	if( is_first ) {
-		gpio_put( GPIO_LED, (count & 4) != 0 );
-	}
-	else if( led_shift ) {
-		gpio_put( GPIO_LED, 1 );
-	}
-	else if( led_sym ) {
-		gpio_put( GPIO_LED, count >= 8 );
+	if( led_caps ) {
+		gpio_put( GPIO_LED_CAPS, 0 );
 	}
 	else {
-		gpio_put( GPIO_LED, 0 );
+		gpio_put( GPIO_LED_CAPS, 1 );
+	}
+	if( led_kana ) {
+		gpio_put( GPIO_LED_KANA, 0 );
+	}
+	else {
+		gpio_put( GPIO_LED_KANA, 1 );
 	}
 }
 
@@ -134,12 +121,19 @@ static void led_control( void ) {
 void setup() {
 
 	gpio_init( KB_INTR );
-	gpio_set_dir( KB_INTR, true );
-	gpio_put( KB_INTR, 1 );
-
 	gpio_init( GPIO_LED );
+	gpio_init( GPIO_LED_CAPS );
+	gpio_init( GPIO_LED_KANA );
+
+	gpio_set_dir( KB_INTR, true );
 	gpio_set_dir( GPIO_LED, true );
-	gpio_put( GPIO_LED, 1 );
+	gpio_set_dir( GPIO_LED_CAPS, true );
+	gpio_set_dir( GPIO_LED_KANA, true );
+
+	gpio_put( KB_INTR, 1 );
+	gpio_put( GPIO_LED, 0 );
+	gpio_put( GPIO_LED_CAPS, 1 );
+	gpio_put( GPIO_LED_KANA, 1 );
 
 	kbscan.begin();
 
@@ -153,7 +147,8 @@ void setup() {
 
 // --------------------------------------------------------------------
 void loop() {
-	const uint8_t *p_key1, *p_key2;
+	const uint8_t *p_key;
+	
 	led_control();
 
 	//	キーマトリクスを送信待ちであれば何もせずに戻る
@@ -168,26 +163,11 @@ void loop() {
 		return;
 	}
 	//	更新したキーマトリクス(MSXタイプ)を取得
-	p_key1 = kbscan.get();
-	std::memcpy( msx_keymap, p_key1, sizeof(msx_keymap) );
-	//	FaceIIタイプキーマトリクスへ変換
-	cf2key.begin();
-	cf2key.regist_msx_key( msx_keymap );
-	p_key1 = cf2key.end();
-	//	シフトキー状態に変更があったか調べる
-	p_key2 = cf2key.get_shift_key();
-	if( p_key2 == NULL ) {
-		//	変更が無かった場合は、新しい FaceIIタイプキーマトリクスを採用
-		std::memcpy( keymap, p_key1, sizeof(keymap) );
-	}
-	else {
-		//	変更があった場合は、まずシフトキーの変更を通知し、新しい FaceIIタイプマトリクスはバックアップをとっておく
-		is_shift = true;
-		std::memcpy( keymap, p_key2, sizeof(keymap) );
-		std::memcpy( next_keymap, p_key1, sizeof(next_keymap) );
-	}
+	p_key = kbscan.get();
+	std::memcpy( keymap + 1, p_key, sizeof(keymap) - 1 );
 	// 割り込み
 	is_sending = true;
 	gpio_put( KB_INTR, 0 );
+	gpio_put( GPIO_LED, 1 );
 	delay( 4 );
 }
