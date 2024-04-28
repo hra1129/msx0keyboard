@@ -28,11 +28,13 @@
 #include "msx0kbscan.h"
 #include "face2keymap.h"
 
-#define I2C_ADDR	0x08							//	I2Cアドレス
-#define I2C_SDA		18								//	SDAにはGPIO18を使用する (※I2C1)
-#define I2C_SCL		19								//	SCLにはGPIO19を使用する (※I2C1)
-#define KB_INTR		17
-#define GPIO_LED	25
+#define I2C_ADDR		0x08							//	I2Cアドレス
+#define I2C_SDA			18								//	SDAにはGPIO18を使用する (※I2C1)
+#define I2C_SCL			19								//	SCLにはGPIO19を使用する (※I2C1)
+#define KB_INTR			17
+#define GPIO_LED		25
+#define GPIO_LED_CAPS	21
+#define GPIO_LED_KANA	20
 
 static CMSX0KBSCAN kbscan;
 static CF2KEY cf2key;
@@ -41,7 +43,6 @@ static uint8_t init_keymap[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB
 static uint8_t next_keymap[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB0, 0x1F, 0xFF };
 static uint8_t msx_keymap[13] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 static uint8_t last_request[2] = { 0, 0 };
-static int count = 0;
 static bool led_shift = false;
 static bool led_sym = false;
 static volatile bool is_shift = false;
@@ -114,19 +115,31 @@ static void on_receive( int len ) {
 // --------------------------------------------------------------------
 static void led_control( void ) {
 
-	count = (count + 1) & 16;
-
 	if( is_first ) {
-		gpio_put( GPIO_LED, (count & 4) != 0 );
-	}
-	else if( led_shift ) {
+		//	1で点灯
 		gpio_put( GPIO_LED, 1 );
 	}
-	else if( led_sym ) {
-		gpio_put( GPIO_LED, count >= 8 );
+	else {
+		//	0で消灯
+		gpio_put( GPIO_LED, 0 );
+	}
+
+	if( led_shift ) {
+		//	0で点灯
+		gpio_put( GPIO_LED_CAPS, 0 );
 	}
 	else {
-		gpio_put( GPIO_LED, 0 );
+		//	1で消灯
+		gpio_put( GPIO_LED_CAPS, 1 );
+	}
+
+	if( led_sym ) {
+		//	0で点灯
+		gpio_put( GPIO_LED_KANA, 0 );
+	}
+	else {
+		//	1で消灯
+		gpio_put( GPIO_LED_KANA, 1 );
 	}
 }
 
@@ -140,6 +153,14 @@ void setup() {
 	gpio_init( GPIO_LED );
 	gpio_set_dir( GPIO_LED, true );
 	gpio_put( GPIO_LED, 1 );
+
+	gpio_init( GPIO_LED_CAPS );
+	gpio_set_dir( GPIO_LED_CAPS, true );
+	gpio_put( GPIO_LED_CAPS, 1 );
+
+	gpio_init( GPIO_LED_KANA );
+	gpio_set_dir( GPIO_LED_KANA, true );
+	gpio_put( GPIO_LED_KANA, 1 );
 
 	kbscan.begin();
 
