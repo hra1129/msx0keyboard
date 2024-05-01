@@ -84,7 +84,7 @@ static const int convert_table[ /* Y */ ][ 8 /* X */ ] = {
 	//    ES        1         2         3         4         5         6         7
 	{ CVT( 7,2),CVT( 0,1),CVT( 0,2),CVT( 0,3),CVT( 0,4),CVT( 0,5),CVT( 0,6),CVT( 0,7) },
 	//    TB        Q         W         E         R         T         Y         U
-	{ CVT( 7,3),CVT( 4,6),CVT( 5,4),CVT( 4,2),CVT( 4,7),CVT( 5,1),CVT( 5,6),CVT( 5,2) },
+	{ CVT( 7,3),CVT( 4,6),CVT( 5,4),CVT( 3,2),CVT( 4,7),CVT( 5,1),CVT( 5,6),CVT( 5,2) },
 	//    I         O         P         @         {         BS        }         RT
 	{ CVT( 3,6),CVT( 4,4),CVT( 4,5),CVT( 1,5),CVT( 1,6),CVT( 7,5),CVT( 2,1),CVT( 7,7) },
 	//    UP        CT        A         S         D         F         G         H
