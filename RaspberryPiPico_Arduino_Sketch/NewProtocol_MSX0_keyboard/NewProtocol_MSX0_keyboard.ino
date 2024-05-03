@@ -27,6 +27,7 @@
 #include <cstring>
 
 #include "msx0kbscan.h"
+#include "face2keymap.h"
 
 #define I2C_ADDR		0x08						//	I2Cアドレス
 #define I2C_SDA			18							//	SDAにはGPIO18を使用する (※I2C1)
@@ -36,14 +37,24 @@
 #define GPIO_LED_CAPS	21
 #define GPIO_LED_KANA	20
 
+static CF2KEY cf2key;
+static uint8_t f2k_keymap[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB0, 0x1F, 0xFF };
+static uint8_t f2k_init_keymap[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB0, 0x1F, 0x12 };	//	新プロトコル対応なら最後は 0x12
+static uint8_t f2k_next_keymap[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB0, 0x1F, 0xFF };
+
 static CMSX0KBSCAN kbscan;
 static uint8_t keymap[14] = { 0x0E, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 static uint8_t init_keymap[14] = { 0x0E, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 static uint8_t msx_keymap[13] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 static uint8_t last_request[2] = { 0, 0 };
+
 static int count = 0;
+static int mode = 0;		//	0: FaceII Keyboard compatible mode, 1: MSX Keyboard mode
+
 static bool led_caps = false;
 static bool led_kana = false;
+static volatile bool is_shift = false;
+static volatile bool is_first = true;
 static volatile bool is_sending = false;
 
 // --------------------------------------------------------------------
@@ -57,10 +68,36 @@ static void on_request() {
 		break;
 	case 0xFE:
 		//	デバイスタイプ要求
-		Wire1.write( 0xA3 );		//	新プロトコル MSX0キーボード
+		Wire1.write( 0xA2 );		//	新プロトコル MSX0キーボード
 		break;
 	default:
 	case 0xF1:
+		//	FaceII Keyboard compatible mode -----------------------
+		mode = 0;
+		//	受信可能タイミング＋装飾キー状態通知
+		if( (last_request[1] & 0x80) != 0 ) {
+			//	装飾キー状態を取り込む
+			led_caps	= ((last_request[1] & 0x10) != 0);
+			led_kana	= ((last_request[1] & 0x20) != 0);
+		}
+		if( !is_shift ) {
+			gpio_put( KB_INTR, 1 );
+		}
+		for( i = 0; i < sizeof(f2k_keymap); i++ ) {
+			Wire1.write( f2k_keymap[i] );
+		}
+		if( is_shift ) {
+			std::memcpy( f2k_keymap, f2k_next_keymap, sizeof(f2k_keymap) );
+			is_shift = false;
+		}
+		else {
+			is_sending	= false;
+			is_first = false;
+		}
+		break;
+	case 0xF2:
+		//	MSX Keyboard mode -------------------------------------
+		mode = 1;
 		//	受信可能タイミング＋装飾キー状態通知
 		if( (last_request[1] & 0x80) != 0 ) {
 			//	装飾キー状態を取り込む
@@ -91,10 +128,13 @@ static void on_receive( int len ) {
 	}
 	if( last_request[0] == 0xF0 ) {
 		//	通信開始要求
+		is_first	= true;
+		is_shift	= false;
 		is_sending	= true;
 		led_caps	= false;
 		led_kana	= false;
 		std::memcpy( keymap, init_keymap, sizeof(keymap) );
+		std::memcpy( f2k_keymap, f2k_init_keymap, sizeof(f2k_keymap) );
 		gpio_put( KB_INTR, 0 );
 		gpio_put( GPIO_LED, 1 );
 	}
@@ -103,16 +143,36 @@ static void on_receive( int len ) {
 // --------------------------------------------------------------------
 static void led_control( void ) {
 
+	count = (count + 1) & 31;
+	
+	if( is_first && ((count & 4) == 0) ) {
+		//	1で点灯
+		gpio_put( GPIO_LED, 1 );
+	}
+	else if( (mode == 0) && ((count & 16) == 0) ) {
+		//	1で点灯
+		gpio_put( GPIO_LED, 1 );
+	}
+	else {
+		//	0で消灯
+		gpio_put( GPIO_LED, 0 );
+	}
+
 	if( led_caps ) {
+		//	0で点灯
 		gpio_put( GPIO_LED_CAPS, 0 );
 	}
 	else {
+		//	1で消灯
 		gpio_put( GPIO_LED_CAPS, 1 );
 	}
+
 	if( led_kana ) {
+		//	0で点灯
 		gpio_put( GPIO_LED_KANA, 0 );
 	}
 	else {
+		//	1で消灯
 		gpio_put( GPIO_LED_KANA, 1 );
 	}
 }
@@ -147,7 +207,7 @@ void setup() {
 
 // --------------------------------------------------------------------
 void loop() {
-	const uint8_t *p_key;
+	const uint8_t *p_key, *p_key1, *p_key2;
 	
 	led_control();
 
@@ -165,7 +225,24 @@ void loop() {
 	//	更新したキーマトリクス(MSXタイプ)を取得
 	p_key = kbscan.get();
 	std::memcpy( keymap + 1, p_key, sizeof(keymap) - 1 );
-	// 割り込み
+	std::memcpy( msx_keymap, p_key, sizeof(msx_keymap) );
+	//	FaceIIタイプキーマトリクスへ変換
+	cf2key.begin();
+	cf2key.regist_msx_key( msx_keymap );
+	p_key1 = cf2key.end();
+	//	シフトキー状態に変更があったか調べる
+	p_key2 = cf2key.get_shift_key();
+	if( p_key2 == NULL ) {
+		//	変更が無かった場合は、新しい FaceIIタイプキーマトリクスを採用
+		std::memcpy( f2k_keymap, p_key1, sizeof(f2k_keymap) );
+	}
+	else {
+		//	変更があった場合は、まずシフトキーの変更を通知し、新しい FaceIIタイプマトリクスはバックアップをとっておく
+		is_shift = true;
+		std::memcpy( f2k_keymap, p_key2, sizeof(f2k_keymap) );
+		std::memcpy( f2k_next_keymap, p_key1, sizeof(f2k_next_keymap) );
+	}
+	//	割り込み
 	is_sending = true;
 	gpio_put( KB_INTR, 0 );
 	gpio_put( GPIO_LED, 1 );
