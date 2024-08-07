@@ -39,7 +39,8 @@
 
 static CF2KEY cf2key;
 static uint8_t f2k_keymap[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB0, 0x1F, 0xFF };
-static uint8_t f2k_init_keymap[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB0, 0x1F, 0x12 };	//	新プロトコル対応なら最後は 0x12
+//static uint8_t f2k_init_keymap[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB0, 0x1F, 0x71 };		//	標準
+static uint8_t f2k_init_keymap[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB1, 0x1F, 0x70 };		//	新プロトコル対応
 static uint8_t f2k_next_keymap[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB0, 0x1F, 0xFF };
 
 static CMSX0KBSCAN kbscan;
@@ -80,9 +81,7 @@ static void on_request() {
 			led_caps	= ((last_request[1] & 0x10) != 0);
 			led_kana	= ((last_request[1] & 0x20) != 0);
 		}
-		if( !is_shift ) {
-			gpio_put( KB_INTR, 1 );
-		}
+		gpio_put( KB_INTR, 1 );
 		for( i = 0; i < sizeof(f2k_keymap); i++ ) {
 			Wire1.write( f2k_keymap[i] );
 		}
@@ -214,6 +213,7 @@ void loop() {
 	//	キーマトリクスを送信待ちであれば何もせずに戻る
 	if( is_sending ) {
 		delay( 1 );
+		gpio_put( KB_INTR, 0 );
 		return;
 	}
 	//	現時点のキーマトリクス状態を調べる
