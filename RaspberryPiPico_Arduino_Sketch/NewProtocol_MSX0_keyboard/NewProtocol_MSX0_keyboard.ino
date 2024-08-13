@@ -38,65 +38,64 @@
 #define GPIO_LED_KANA	20
 
 static CF2KEY cf2key;
-static uint8_t f2k_keymap[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB0, 0x1F, 0xFF };
-//static uint8_t f2k_init_keymap[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB0, 0x1F, 0x71 };		//	標準
-static uint8_t f2k_init_keymap[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB1, 0x1F, 0x70 };		//	新プロトコル対応
-static uint8_t f2k_next_keymap[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB0, 0x1F, 0xFF };
 
 static CMSX0KBSCAN kbscan;
-static uint8_t keymap[14] = { 0x0E, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
-static uint8_t init_keymap[14] = { 0x0E, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
-static uint8_t msx_keymap[13] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
-static uint8_t last_request[2] = { 0, 0 };
+static uint8_t keymap[14]		= { 0x0E, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+static uint8_t init_keymap[14]	= { 0x0E, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+static uint8_t msx_keymap[13]	= { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+static uint8_t last_request[2]	= { 0, 0 };
 
 static int count = 0;
 static int mode = 0;		//	0: FaceII Keyboard compatible mode, 1: MSX Keyboard mode
 
 static bool led_caps = false;
 static bool led_kana = false;
-static volatile bool is_shift = false;
-static volatile bool is_first = true;
-static volatile bool is_sending = false;
+static bool is_negosiate = true;
 
 // --------------------------------------------------------------------
 //	MSX0からの読み出し
 static void on_request() {
 	int i;
 	uint8_t d;
+	static CSEND_DATA send_data;
 
 	switch( last_request[0] ) {
 	case 0xF0:
 		break;
 	case 0xFE:
 		//	デバイスタイプ要求
-		Wire1.write( 0xA2 );		//	新プロトコル MSX0キーボード
+		Wire1.write( 0xA2 );		//	MSX0キーボード
 		break;
 	default:
 	case 0xF1:
 		//	FaceII Keyboard compatible mode -----------------------
+		if( cf2key.get_send_data_count() <= 1 ) {
+			gpio_put( KB_INTR, 1 );
+		}
 		mode = 0;
+		is_negosiate = false;
 		//	受信可能タイミング＋装飾キー状態通知
 		if( (last_request[1] & 0x80) != 0 ) {
 			//	装飾キー状態を取り込む
 			led_caps	= ((last_request[1] & 0x10) != 0);
-			led_kana	= ((last_request[1] & 0x20) != 0);
+			led_kana	= cf2key.get_kana_mode();
 		}
-		gpio_put( KB_INTR, 1 );
-		for( i = 0; i < sizeof(f2k_keymap); i++ ) {
-			Wire1.write( f2k_keymap[i] );
+		send_data = cf2key.get_send_data();
+
+		for( i = 0; i < 10; i++ ) {
+			Wire1.write( send_data.data[i] );
+			DEBUG( Serial.printf( "%02X,", send_data.data[i] ) );
 		}
-		if( is_shift ) {
-			std::memcpy( f2k_keymap, f2k_next_keymap, sizeof(f2k_keymap) );
-			is_shift = false;
-		}
-		else {
-			is_sending	= false;
-			is_first = false;
-		}
+		DEBUG( Serial.printf( "[%d]\n", (int)cf2key.get_send_data_count() ) );
 		break;
 	case 0xF2:
 		//	MSX Keyboard mode -------------------------------------
+		gpio_put( KB_INTR, 1 );
+		if( mode == 0 ) {
+			cf2key.clear();
+		}
 		mode = 1;
+		is_negosiate = false;
 		//	受信可能タイミング＋装飾キー状態通知
 		if( (last_request[1] & 0x80) != 0 ) {
 			//	装飾キー状態を取り込む
@@ -106,8 +105,6 @@ static void on_request() {
 		for( i = 0; i < sizeof(keymap); i++ ) {
 			Wire1.write( keymap[i] );
 		}
-		is_sending	= false;
-		gpio_put( KB_INTR, 1 );
 		gpio_put( GPIO_LED, 0 );
 		break;
 	}
@@ -119,6 +116,7 @@ static void on_receive( int len ) {
 	int i;
 
 	i = 0;
+	//	書き込まれた値の先頭 2byte を last_request[] に保存する
 	while( Wire1.available() ) {
 		if( i < 2 ) {
 			last_request[i] = Wire1.read();
@@ -126,16 +124,15 @@ static void on_receive( int len ) {
 		}
 	}
 	if( last_request[0] == 0xF0 ) {
-		//	通信開始要求
-		is_first	= true;
-		is_shift	= false;
-		is_sending	= true;
+		//	最初の開始コマンドだった場合、こちらも初期化する
+		DEBUG( Serial.printf( "Recv: 0xF0\n" ) );
 		led_caps	= false;
 		led_kana	= false;
+		is_negosiate = true;
 		std::memcpy( keymap, init_keymap, sizeof(keymap) );
-		std::memcpy( f2k_keymap, f2k_init_keymap, sizeof(f2k_keymap) );
+		cf2key.clear();
+		cf2key.set_initial_matrix();
 		gpio_put( KB_INTR, 0 );
-		gpio_put( GPIO_LED, 1 );
 	}
 }
 
@@ -144,7 +141,7 @@ static void led_control( void ) {
 
 	count = (count + 1) & 31;
 	
-	if( is_first && ((count & 4) == 0) ) {
+	if( is_negosiate && ((count & 4) == 0) ) {
 		//	1で点灯
 		gpio_put( GPIO_LED, 1 );
 	}
@@ -194,6 +191,9 @@ void setup() {
 	gpio_put( GPIO_LED_CAPS, 1 );
 	gpio_put( GPIO_LED_KANA, 1 );
 
+	DEBUG( Serial.begin( 115200 ) );
+	DEBUG( Serial.print( "Start MSX0 Keyboard\n" ) );
+
 	kbscan.begin();
 
 	//I2Cスレーブ設定
@@ -206,14 +206,14 @@ void setup() {
 
 // --------------------------------------------------------------------
 void loop() {
-	const uint8_t *p_key, *p_key1, *p_key2;
-	
+	const uint8_t *p_key;
+
+	//	LEDを制御する
 	led_control();
 
 	//	キーマトリクスを送信待ちであれば何もせずに戻る
-	if( is_sending ) {
-		delay( 1 );
-		gpio_put( KB_INTR, 0 );
+	if( cf2key.get_send_data_count() ) {
+		delay( 4 );
 		return;
 	}
 	//	現時点のキーマトリクス状態を調べる
@@ -222,29 +222,15 @@ void loop() {
 		delay( 4 );
 		return;
 	}
+	DEBUG( Serial.printf( "Key scan changed\n" ) );
 	//	更新したキーマトリクス(MSXタイプ)を取得
 	p_key = kbscan.get();
-	std::memcpy( keymap + 1, p_key, sizeof(keymap) - 1 );
-	std::memcpy( msx_keymap, p_key, sizeof(msx_keymap) );
-	//	FaceIIタイプキーマトリクスへ変換
+	//	FaceII Keyboard compatible mode -----------------------
 	cf2key.begin();
+	std::memcpy( msx_keymap, p_key, sizeof(msx_keymap) );
 	cf2key.regist_msx_key( msx_keymap );
-	p_key1 = cf2key.end();
-	//	シフトキー状態に変更があったか調べる
-	p_key2 = cf2key.get_shift_key();
-	if( p_key2 == NULL ) {
-		//	変更が無かった場合は、新しい FaceIIタイプキーマトリクスを採用
-		std::memcpy( f2k_keymap, p_key1, sizeof(f2k_keymap) );
-	}
-	else {
-		//	変更があった場合は、まずシフトキーの変更を通知し、新しい FaceIIタイプマトリクスはバックアップをとっておく
-		is_shift = true;
-		std::memcpy( f2k_keymap, p_key2, sizeof(f2k_keymap) );
-		std::memcpy( f2k_next_keymap, p_key1, sizeof(f2k_next_keymap) );
-	}
-	//	割り込み
-	is_sending = true;
+	cf2key.end();
+	//	MSX Keyboard mode -------------------------------------
+	std::memcpy( keymap + 1, p_key, sizeof(keymap) - 1 );
 	gpio_put( KB_INTR, 0 );
-	gpio_put( GPIO_LED, 1 );
-	delay( 4 );
 }

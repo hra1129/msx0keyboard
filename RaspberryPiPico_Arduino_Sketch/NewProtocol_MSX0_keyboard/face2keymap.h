@@ -27,6 +27,13 @@
 
 #include <Arduino.h>
 #include <cstring>
+#include <vector>
+
+#if 0		//	0: Release mode, 1: Debug mode (Serial ON)
+#  define DEBUG(a) a
+#else
+#  define DEBUG(a)
+#endif
 
 #define CF2K_KEYMACRO( row, column, shift_keycode )	( ((shift_keycode) << 16) | (((row) - 1) << 8) | ((1 << (column)) ^ 0xFF) )
 #define CF2K_GET_COLUMN( keycode )	( (keycode) & 0xFF )
@@ -134,7 +141,8 @@ typedef enum {
 
 	CF2K_RT		= CF2K_KEYMACRO( 8, 2, CF2K_UPD_ALL ),	//	RET
 	CF2K_ALT	= CF2K_KEYMACRO( 8, 1, CF2K_UPD_ALL ),	//	ALT
-	CF2K_CAPS	= CF2K_KEYMACRO( 8, 0, CF2K_UPD_ALL ),	//	CAPS
+	CF2K_CAPS	= CF2K_KEYMACRO( 8, 0, CF2K_UPD_NORMAL | CF2K_UPD_SYM ),	//	CAPS
+	CF2K_KANA	= CF2K_KEYMACRO( 8, 0, CF2K_UPD_FN ),	//	KANA
 } CF2K_KEYCODE;
 
 typedef enum {
@@ -143,20 +151,49 @@ typedef enum {
 	CF2KP_H = 27,
 } CF2K_PRIORITY;
 
+class CSEND_DATA {
+public:
+	uint8_t data[10];
+};
+
 class CF2KEY {
 private:
-	const uint8_t init_keymap[3][8] = {
-		{ 0x03, 0xFF, 0x13, 0xFF, 0x23, 0xFF, 0x30, 0x1F },		//	CF2K_DECO_NONE
-		{ 0x03, 0xFF, 0x13, 0xFF, 0x23, 0xFF, 0xB0, 0x1F },		//	CF2K_DECO_SYM
-		{ 0x03, 0xFF, 0x13, 0xFF, 0x23, 0xFF, 0xB0, 0x1F },		//	CF2K_DECO_FN
+	const uint8_t init_keymap[3][10] = {
+		{ 0x0A, 0x03, 0xFF, 0x13, 0xFF, 0x23, 0xFF, 0x30, 0x1F, 0x00 },		//	CF2K_DECO_NONE
+		{ 0x0A, 0x03, 0xFF, 0x13, 0xFF, 0x23, 0xFF, 0xB0, 0x1F, 0x00 },		//	CF2K_DECO_SYM
+		{ 0x0A, 0x03, 0xFF, 0x13, 0xFF, 0x23, 0xFF, 0xB0, 0x1F, 0x00 },		//	CF2K_DECO_FN
 	};
-	uint8_t last_keymap[8] = { 0x03, 0xFF, 0x13, 0xFF, 0x23, 0xFF, 0x30, 0x1F };
-	uint8_t send_bytes[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB0, 0x1F, 0x71 };
-	uint8_t current_keymap[3][8];
+	CSEND_DATA last_send_bytes;
+	CSEND_DATA send_bytes;
+	uint8_t current_keymap[3][10];
 	int priority[3];
-	int last_priority = -1;
-	bool has_shift_changed = false;
+	bool is_kana_key = false;
+	bool is_kana_key_pressed = false;
+	bool is_kana_mode = false;
+	bool is_shift_pressed = false;
+	std::vector< CSEND_DATA > send_fifo;
+
+	// ----------------------------------------------------------------
+	//	regist_pressed_key( keycode, priority )
+	//		The specified key is registered as the currently pressed state.
+	//		指定のキーが、現在押されている状態として登録する。
+	//
+	void regist_pressed_key( CF2K_KEYCODE keycode, CF2K_PRIORITY priority = CF2KP_L );
+
+	// ----------------------------------------------------------------
+	//	copy_send_data()
+	//		Copy send data
+	//		送信バイト列をセットする。
+	//
+	void copy_send_data( const uint8_t *p, int shift_key = -1 );
+
 public:
+	// --------------------------------------------------------------------
+	CF2KEY() {
+		std::memcpy( send_bytes.data, &init_keymap[0][0], 10 );
+		std::memcpy( last_send_bytes.data, &init_keymap[0][0], 10 );
+	}
+
 	// ----------------------------------------------------------------
 	//	begin()
 	//		Clear the previous key entry information and prepare to 
@@ -165,13 +202,6 @@ public:
 	//		開始する準備をする。
 	//
 	void begin( void );
-
-	// ----------------------------------------------------------------
-	//	regist_pressed_key( keycode, priority )
-	//		The specified key is registered as the currently pressed state.
-	//		指定のキーが、現在押されている状態として登録する。
-	//
-	void regist_pressed_key( CF2K_KEYCODE keycode, CF2K_PRIORITY priority = CF2KP_L );
 
 	// ----------------------------------------------------------------
 	//	regist_msx_key( keymap[11] )
@@ -187,17 +217,63 @@ public:
 	//		押されたキーと、そのプライオリティに従って、
 	//		送信すべきキーマトリクスを生成して返す。
 	//
-	const uint8_t *end( void );
+	void end( void );
 
 	// ----------------------------------------------------------------
-	//	get_shift_key()
+	//	get_send_data_count()
+	//		Returns the number of data stored in the transmit FIFO.
+	//		送信FIFOにたまっているデータ数を返す。
+	//
+	int get_send_data_count( void ) const {
+		return( (int)send_fifo.size() );
+	}
+
+	// ----------------------------------------------------------------
+	//	get_send_data()
 	//		Generate and return a key matrix to be sent according to 
 	//		the keys pressed and their priority.
-	//		最後に end() した時に、装飾キーの状態が変化していた場合、
-	//		装飾キー変更のキーマトリクスを返す。
-	//		変更が無い場合は NULL を返す。
+	//		押されたキーと、そのプライオリティに従って、
+	//		送信すべきキーマトリクスを生成して返す。
 	//
-	const uint8_t *get_shift_key( void );
+	CSEND_DATA get_send_data( void ) {
+		if( get_send_data_count() ) {
+			last_send_bytes = send_fifo.back();
+			send_fifo.pop_back();
+		}
+		return last_send_bytes;
+	}
+
+	// ----------------------------------------------------------------
+	//	set_initial_matrix()
+	//		Set initial matrix.
+	//		初期キーマトリクスをセットする。
+	//
+	void set_initial_matrix( void ) {
+		CSEND_DATA send_data;
+		//static uint8_t init_keymap[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB0, 0x1F, 0x71 };		//	標準
+		static uint8_t init_keymap[10] = { 0x0A, 0x83, 0xFF, 0x93, 0xFF, 0xA3, 0xFF, 0xB1, 0x1F, 0x70 };		//	新プロトコル対応
+
+		std::memcpy( send_data.data, init_keymap, 10 );
+		send_fifo.insert( send_fifo.begin(), send_data );
+	}
+
+	// ----------------------------------------------------------------
+	//	get_kana_mode()
+	//		Kana mode status acquisition for Kana LED display.
+	//		かなLED表示のための、かなモード状態取得。
+	//
+	bool get_kana_mode( void ) const {
+		return this->is_kana_mode;
+	}
+
+	// ----------------------------------------------------------------
+	//	clear()
+	//		Clear the internal FIFO.
+	//		内部の FIFO をクリアする。
+	//
+	void clear( void ) {
+		send_fifo.clear();
+	}
 };
 
 #endif

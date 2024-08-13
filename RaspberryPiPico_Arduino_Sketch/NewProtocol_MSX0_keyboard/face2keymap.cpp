@@ -51,7 +51,7 @@ static const int convert_table[ 2 /* shift */ ][ 11 /* Y */ ][ 8 /* X */ ] = {
 		{ MK(CF2K_C,CF2KP_L),     MK(CF2K_D,CF2KP_L),     MK(CF2K_E,CF2KP_L),     MK(CF2K_F,CF2KP_L),    MK(CF2K_G,CF2KP_L),     MK(CF2K_H,CF2KP_L),    MK(CF2K_I,CF2KP_L),     MK(CF2K_J,CF2KP_L)    },
 		{ MK(CF2K_K,CF2KP_L),     MK(CF2K_L,CF2KP_L),     MK(CF2K_M,CF2KP_L),     MK(CF2K_N,CF2KP_L),    MK(CF2K_O,CF2KP_L),     MK(CF2K_P,CF2KP_L),    MK(CF2K_Q,CF2KP_L),     MK(CF2K_R,CF2KP_L)    },
 		{ MK(CF2K_S,CF2KP_L),     MK(CF2K_T,CF2KP_L),     MK(CF2K_U,CF2KP_L),     MK(CF2K_V,CF2KP_L),    MK(CF2K_W,CF2KP_L),     MK(CF2K_X,CF2KP_L),    MK(CF2K_Y,CF2KP_L),     MK(CF2K_Z,CF2KP_L)    },
-		{ MK(CF2K_ALT,CF2KP_L),   -1,                     -1,                     MK(CF2K_CAPS,CF2KP_L), -1,                     -1,                    -1,                     -1                    },
+		{ MK(CF2K_ALT,CF2KP_L),   -1,                     -1,                     MK(CF2K_CAPS,CF2KP_L), MK(CF2K_KANA,CF2KP_H),  -1,                    -1,                     -1                    },
 		{ -1,                     -1,                     MK(CF2K_ESC,CF2KP_L),   MK(CF2K_TAB,CF2KP_L),  MK(CF2K_END,CF2KP_L),   MK(CF2K_BS,CF2KP_H),   -1,                     MK(CF2K_RT,CF2KP_H)   },
 		{ MK(CF2K_SP,CF2KP_H),    MK(CF2K_HOME,CF2KP_H),  MK(CF2K_INS,CF2KP_H),   MK(CF2K_DEL,CF2KP_M),  MK(CF2K_LE,CF2KP_H),    MK(CF2K_UP,CF2KP_H),   MK(CF2K_DN,CF2KP_H),    MK(CF2K_RI,CF2KP_H)   },
 		{ -1, -1, -1, -1, -1, -1, -1, -1 },
@@ -64,7 +64,7 @@ static const int convert_table[ 2 /* shift */ ][ 11 /* Y */ ][ 8 /* X */ ] = {
 		{ MK(CF2K_C,CF2KP_L),     MK(CF2K_D,CF2KP_L),     MK(CF2K_E,CF2KP_L),     MK(CF2K_F,CF2KP_L),     MK(CF2K_G,CF2KP_L),     MK(CF2K_H,CF2KP_L),    MK(CF2K_I,CF2KP_L),     MK(CF2K_J,CF2KP_L)     },
 		{ MK(CF2K_K,CF2KP_L),     MK(CF2K_L,CF2KP_L),     MK(CF2K_M,CF2KP_L),     MK(CF2K_N,CF2KP_L),     MK(CF2K_O,CF2KP_L),     MK(CF2K_P,CF2KP_L),    MK(CF2K_Q,CF2KP_L),     MK(CF2K_R,CF2KP_L)     },
 		{ MK(CF2K_S,CF2KP_L),     MK(CF2K_T,CF2KP_L),     MK(CF2K_U,CF2KP_L),     MK(CF2K_V,CF2KP_L),     MK(CF2K_W,CF2KP_L),     MK(CF2K_X,CF2KP_L),    MK(CF2K_Y,CF2KP_L),     MK(CF2K_Z,CF2KP_L)     },
-		{ MK(CF2K_ALT,CF2KP_L),   -1,                     -1,                     MK(CF2K_CAPS,CF2KP_L),  -1,                     -1,                    -1,                     -1                     },
+		{ MK(CF2K_ALT,CF2KP_L),   -1,                     -1,                     MK(CF2K_CAPS,CF2KP_L),  MK(CF2K_KANA,CF2KP_H),  -1,                    -1,                     -1                     },
 		{ -1,                     -1,                     MK(CF2K_ESC,CF2KP_L),   MK(CF2K_TAB,CF2KP_L),   MK(CF2K_END,CF2KP_L),   MK(CF2K_BS,CF2KP_H),   -1,                     MK(CF2K_RT,CF2KP_H)    },
 		{ MK(CF2K_SP,CF2KP_H),    MK(CF2K_HOME,CF2KP_H),  MK(CF2K_INS,CF2KP_H),   MK(CF2K_DEL,CF2KP_M),   MK(CF2K_LE,CF2KP_H),    MK(CF2K_UP,CF2KP_H),   MK(CF2K_DN,CF2KP_H),    MK(CF2K_RI,CF2KP_H)    },
 		{ -1, -1, -1, -1, -1, -1, -1, -1 },
@@ -84,10 +84,7 @@ void CF2KEY::begin( void ) {
 	std::memcpy( this->current_keymap, this->init_keymap, sizeof( this->current_keymap ) );
 	std::memset( this->priority, 0, sizeof( this->priority ) );
 
-	if( this->last_priority != -1 ) {
-		//	全部同プライオリティだった場合、現在の装飾キーを維持するように 1 優位にしておく
-		this->priority[ this->last_priority ] = 1;
-	}
+	this->is_kana_key = false;
 }
 
 // ----------------------------------------------------------------
@@ -98,7 +95,7 @@ void CF2KEY::begin( void ) {
 void CF2KEY::regist_pressed_key( CF2K_KEYCODE keycode, CF2K_PRIORITY priority ) {
 	int i;
 	int column	= CF2K_GET_COLUMN( keycode );
-	int row		= CF2K_GET_ROW( keycode );
+	int row		= CF2K_GET_ROW( keycode ) + 1;
 	int shift	= CF2K_GET_SHIFT( keycode );
 
 	for( i = 0; i < 3; i++ ) {
@@ -120,26 +117,73 @@ void CF2KEY::regist_msx_key( const uint8_t *p_msx_key ) {
 	CF2K_KEYCODE keycode;
 
 	shift_key = (p_msx_key[6] & 1) ^ 1;
-	Serial.printf( "SFT:%d ", shift_key );
 	for( y = 0; y < 11; y++ ) {
 		key = p_msx_key[y];
-		if( key == 0xFF ) {
-			continue;
-		}
 		for( x = 0; x < 8; x++ ) {
 			if( (key & 1) == 0 ) {
 				//	キーが押されていた場合
-				cf2k = convert_table[shift_key][y][x];
-				if( cf2k != -1 ) {
-					keycode = (CF2K_KEYCODE)(cf2k & 0xFFFFFF);
-					priority = (CF2K_PRIORITY)(cf2k >> 24);
-					//Serial.printf( "KC:%02X (MSX %d, %d)\r\n", keycode, y, x );
-					this->regist_pressed_key( keycode, priority );
+				if( x == 4 && y == 6 ) {
+					//	かなキーの場合
+					if( !this->is_kana_key_pressed ) {
+						DEBUG( Serial.printf( "KANA Key pressed.\n" ) );
+						this->is_kana_key = true;
+						this->is_kana_key_pressed = true;
+					}
+				}
+				else {
+					//	その他のキーの場合
+					cf2k = convert_table[shift_key][y][x];
+					if( cf2k != -1 ) {
+						keycode = (CF2K_KEYCODE)(cf2k & 0xFFFFFF);
+						priority = (CF2K_PRIORITY)(cf2k >> 24);
+						this->regist_pressed_key( keycode, priority );
+					}
+				}
+			}
+			else {
+				//	キーが解放されている場合
+				if( x == 4 && y == 6 ) {
+					//	かなキーの場合
+					if( this->is_kana_key_pressed ) {
+						DEBUG( Serial.printf( "KANA Key released.\n" ) );
+						this->is_kana_key = true;
+						this->is_kana_key_pressed = false;
+					}
 				}
 			}
 			key >>= 1;
 		}
 	}
+}
+
+// ----------------------------------------------------------------
+//	copy_send_data()
+//		Copy send data
+//		送信バイト列をセットする。
+//
+void CF2KEY::copy_send_data( const uint8_t *p, int shift_key ) {
+	int i, sum;
+	uint8_t d0, d1;
+
+	sum = 0x0A;
+	this->send_bytes.data[0] = 0x0A;
+	shift_key |= 0x1D;
+	for( i = 1; i < 9; i += 2 ) {
+		d0 = p[i + 0] & 0x7F;
+		d1 = p[i + 1];
+		if( i == 7 && shift_key != -1 ) {
+			//	ALTキーの状態は継承する
+			d1 &= shift_key;
+		}
+		if( (this->send_bytes.data[i + 0] & 0x7F) != d0 || this->send_bytes.data[i + 1] != d1 ) {
+			d0 |= 0x80;
+		}
+		this->send_bytes.data[i + 0] = d0;
+		this->send_bytes.data[i + 1] = d1;
+		sum += d0 + d1;
+	}
+	this->send_bytes.data[9] = (uint8_t) -sum;
+	send_fifo.insert( send_fifo.begin(), this->send_bytes );
 }
 
 // ----------------------------------------------------------------
@@ -149,9 +193,14 @@ void CF2KEY::regist_msx_key( const uint8_t *p_msx_key ) {
 //		押されたキーと、そのプライオリティに従って、
 //		送信すべきキーマトリクスを生成して返す。
 //
-const uint8_t *CF2KEY::end( void ) {
+void CF2KEY::end( void ) {
+	static const uint8_t shift_keymap[4][10] = {
+		{ 0x0A, 0x03, 0xFF, 0x13, 0xFF, 0x23, 0xFF, 0xB0, 0x1F, 0xF1 },		//	0: CF2K_DECO_NONE
+		{ 0x0A, 0x03, 0xFF, 0x13, 0xFF, 0x23, 0xFF, 0xB0, 0x17, 0xF9 },		//	1: CF2K_DECO_SYM
+		{ 0x0A, 0x03, 0xFF, 0x13, 0xFF, 0x23, 0xFF, 0xB0, 0x0F, 0x01 },		//	2: CF2K_DECO_FN
+		{ 0x0A, 0x03, 0xFF, 0x13, 0xFF, 0x23, 0xFF, 0xB0, 0x0E, 0x02 },		//	3: CF2K_DECO_FN  + aA
+	};
 	int i;
-	uint8_t *p, sum, d0, d1;
 
 	//	優先度の高いシフトキー状態を選択する
 	int top_priority_shift = 0;
@@ -162,53 +211,28 @@ const uint8_t *CF2KEY::end( void ) {
 			top_priority = this->priority[i];
 		}
 	}
-	if( this->last_priority != top_priority_shift ) {
-		this->last_priority = top_priority_shift;
-		this->has_shift_changed = true;
-	}
-
-	//	更新通知ビットの生成とバッファへコピーとチェックサム生成
-	p = &(this->current_keymap[ top_priority_shift ][0]);
-	sum = 0x0A;
-	for( i = 0; i < 8; i += 2 ) {
-		d0 = p[0];
-		d1 = p[1];
-		if( this->last_keymap[i + 0] != d0 || this->last_keymap[i + 1] != d1 ) {
-			this->last_keymap[i + 0] = d0;
-			this->last_keymap[i + 1] = d1;
-			d0 |= 0x80;
+	//	かなキーが変化した場合は、かなキー専用のコマンドを送信する
+	if( this->is_kana_key ) {
+		if( this->is_kana_key_pressed ) {
+			this->is_kana_mode = !this->is_kana_mode;
 		}
-		this->send_bytes[i + 1] = d0;
-		this->send_bytes[i + 2] = d1;
-		p += 2;
-		sum += d0 + d1;
+		if( this->is_kana_key_pressed ) {
+			DEBUG( Serial.printf( "Begin KANA mode\n" ) );
+			this->copy_send_data( &shift_keymap[2][0], current_keymap[ top_priority_shift ][8] );	//	[Fn]
+			this->copy_send_data( &shift_keymap[3][0], current_keymap[ top_priority_shift ][8] );	//	[Fn] + [aA]
+		}
+		else {
+			DEBUG( Serial.printf( "End KANA mode\n" ) );
+			this->copy_send_data( &shift_keymap[2][0], current_keymap[ top_priority_shift ][8] );	//	[Fn]
+			this->copy_send_data( &shift_keymap[0][0], current_keymap[ top_priority_shift ][8] );	//	None
+		}
 	}
-	this->send_bytes[9] = -sum;
-	return this->send_bytes;
-}
+	//	シフトキー状態が変化する場合は、変更マトリクスを単独で送信する
+	DEBUG( Serial.printf( "Shift key changed [%d]\n", top_priority_shift ) );
+	this->copy_send_data( &shift_keymap[ top_priority_shift ][0] );
+	this->send_bytes.data[8] = 0x1F;
 
-// ----------------------------------------------------------------
-//	get_shift_key()
-//		Generate and return a key matrix to be sent according to 
-//		the keys pressed and their priority.
-//		最後に end() した時に、装飾キーの状態が変化していた場合、
-//		装飾キー変更のキーマトリクスを返す。
-//		変更が無い場合は NULL を返す。
-//
-const uint8_t *CF2KEY::get_shift_key( void ) {
-	static const uint8_t shift_keymap[3][10] = {
-		{ 0x0A, 0x03, 0xFF, 0x13, 0xFF, 0x23, 0xFF, 0xB0, 0x1F, 0xF1 },		//	CF2K_DECO_NONE
-		{ 0x0A, 0x03, 0xFF, 0x13, 0xFF, 0x23, 0xFF, 0xB0, 0x17, 0xF9 },		//	CF2K_DECO_SYM
-		{ 0x0A, 0x03, 0xFF, 0x13, 0xFF, 0x23, 0xFF, 0xB0, 0x0F, 0x01 },		//	CF2K_DECO_FN
-	};
-	int lp = this->last_priority;
-
-	if( !this->has_shift_changed ) {
-		return NULL;
-	}
-	this->has_shift_changed = false;
-	if( this->last_priority != 0 ) {
-		this->last_priority = 0;
-	}
-	return( &shift_keymap[ lp ][0] );
+	//	更新通知ビットの生成とバッファへコピー
+	this->copy_send_data( &(this->current_keymap[ top_priority_shift ][0]) );
+	DEBUG( Serial.printf( "Check sum: %02X\n", this->send_bytes.data[9] ) );
 }
